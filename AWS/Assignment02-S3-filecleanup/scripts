@@ -1,0 +1,42 @@
+import boto3
+from datetime import datetime, timezone, timedelta
+
+# Initialize S3 client
+s3 = boto3.client('s3')
+
+# Bucket name
+BUCKET_NAME = "aws-assign02-s3-cleanupfiles"
+
+# Days threshold
+DAYS_OLD = 0
+
+
+def lambda_handler(event, context):
+
+    # Calculate cutoff date
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=DAYS_OLD)
+
+    # List objects in bucket
+    response = s3.list_objects_v2(Bucket=BUCKET_NAME)
+
+    if 'Contents' not in response:
+        print("Bucket is empty")
+        return
+
+    # Loop through objects
+    for obj in response['Contents']:
+        file_name = obj['Key']
+        last_modified = obj['LastModified']
+
+        # Check file age
+        if last_modified < cutoff_date:
+
+            # Delete file
+            s3.delete_object(
+                Bucket=BUCKET_NAME,
+                Key=file_name
+            )
+
+            print(f"Deleted: {file_name}")
+
+    print("Cleanup completed")
