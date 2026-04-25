@@ -1,0 +1,405 @@
+Phase 2 — Install Docker on EC2
+Run each command one by one in your EC2 terminal:
+
+Step 1 — Update server packages
+sudo apt update && sudo apt upgrade -y
+
+Step 2 — Install Docker
+sudo apt install docker.io -y
+
+Step 3 — Start and enable Docker
+sudo systemctl start docker
+sudo systemctl enable docker
+
+Step 4 — Allow running Docker without sudo
+sudo usermod -aG docker ubuntu
+newgrp docker
+
+Step 5 — Install Docker Compose
+sudo apt install docker-compose -y
+
+Step 6 — Verify installation
+docker --version
+docker-compose --version
+Tip: You should see version numbers printed. If so, Docker is ready!
+
+
+Phase 3 — Create Project Folder Structure
+
+Step 1 — Create all folders
+mkdir -p ~/submission/{user-service,product-service,order-service,gateway-service}
+
+Step 2 — Go into the submission folder
+cd ~/submission
+
+Useful navigation commands
+Command	What it does
+cd ~/submission	Go directly to submission folder from anywhere
+cd ..	Go back one folder
+ls	List files in current folder
+cat filename	View contents of a file
+nano filename	Open and edit a file
+
+
+Phase 4 — Create All Service Files
+Use the cat command to create files. Copy each entire block and paste it into your terminal, then press Enter.
+
+User Service (Port 3000)
+
+user-service/index.js
+cat > ~/submission/user-service/index.js << 'EOF'
+const express = require('express');
+const app = express();
+app.use(express.json());
+const users = [
+  { id: 1, name: 'Alice', email: 'alice@example.com' },
+  { id: 2, name: 'Bob',   email: 'bob@example.com' },
+];
+app.get('/health', (req, res) => res.json({ status: 'ok', service: 'user-service' }));
+app.get('/users',  (req, res) => res.json({ success: true, data: users }));
+app.get('/users/:id', (req, res) => {
+  const user = users.find(u => u.id === parseInt(req.params.id));
+  user ? res.json({ success: true, data: user }) : res.status(404).json({ error: 'Not found' });
+});
+app.listen(3000, () => console.log('User Service running on port 3000'));
+EOF
+
+user-service/package.json
+cat > ~/submission/user-service/package.json << 'EOF'
+{
+  "name": "user-service",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": { "start": "node index.js" },
+  "dependencies": { "express": "^4.18.2" }
+}
+EOF
+
+user-service/Dockerfile
+cat > ~/submission/user-service/Dockerfile << 'EOF'
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install --omit=dev
+COPY . .
+EXPOSE 3000
+CMD ["node", "index.js"]
+EOF
+
+Product Service (Port 3001)
+
+product-service/index.js
+cat > ~/submission/product-service/index.js << 'EOF'
+const express = require('express');
+const app = express();
+app.use(express.json());
+const products = [
+  { id: 1, name: 'Laptop', price: 1299.99 },
+  { id: 2, name: 'Mouse',  price: 29.99 },
+];
+app.get('/health',   (req, res) => res.json({ status: 'ok', service: 'product-service' }));
+app.get('/products', (req, res) => res.json({ success: true, data: products }));
+app.get('/products/:id', (req, res) => {
+  const p = products.find(p => p.id === parseInt(req.params.id));
+  p ? res.json({ success: true, data: p }) : res.status(404).json({ error: 'Not found' });
+});
+app.listen(3001, () => console.log('Product Service running on port 3001'));
+EOF
+
+product-service/package.json
+cat > ~/submission/product-service/package.json << 'EOF'
+{
+  "name": "product-service",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": { "start": "node index.js" },
+  "dependencies": { "express": "^4.18.2" }
+}
+EOF
+
+product-service/Dockerfile
+cat > ~/submission/product-service/Dockerfile << 'EOF'
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install --omit=dev
+COPY . .
+EXPOSE 3001
+CMD ["node", "index.js"]
+EOF
+
+Order Service (Port 3002)
+
+order-service/index.js
+cat > ~/submission/order-service/index.js << 'EOF'
+const express = require('express');
+const app = express();
+app.use(express.json());
+const orders = [
+  { id: 1, userId: 1, productId: 1, status: 'delivered' },
+  { id: 2, userId: 2, productId: 2, status: 'pending' },
+];
+app.get('/health', (req, res) => res.json({ status: 'ok', service: 'order-service' }));
+app.get('/orders', (req, res) => res.json({ success: true, data: orders }));
+app.post('/orders', (req, res) => {
+  const order = { id: orders.length + 1, ...req.body, status: 'pending' };
+  orders.push(order);
+  res.status(201).json({ success: true, data: order });
+});
+app.listen(3002, () => console.log('Order Service running on port 3002'));
+EOF
+
+order-service/package.json
+cat > ~/submission/order-service/package.json << 'EOF'
+{
+  "name": "order-service",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": { "start": "node index.js" },
+  "dependencies": { "express": "^4.18.2" }
+}
+EOF
+
+order-service/Dockerfile
+cat > ~/submission/order-service/Dockerfile << 'EOF'
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install --omit=dev
+COPY . .
+EXPOSE 3002
+CMD ["node", "index.js"]
+EOF
+
+Gateway Service (Port 3003)
+
+gateway-service/index.js
+cat > ~/submission/gateway-service/index.js << 'EOF'
+const express = require('express');
+const http = require('http');
+const app = express();
+app.use(express.json());
+
+function proxy(host, port, path, res) {
+  http.get({ host, port, path }, upstream => {
+    let data = '';
+    upstream.on('data', chunk => data += chunk);
+    upstream.on('end', () => {
+      try { res.json(JSON.parse(data)); } catch { res.send(data); }
+    });
+  }).on('error', err => res.status(502).json({ error: 'Service unavailable' }));
+}
+
+app.get('/health',       (req, res) => res.json({ status: 'ok', service: 'gateway' }));
+app.get('/users',        (req, res) => proxy('user-service',    3000, '/users', res));
+app.get('/users/:id',    (req, res) => proxy('user-service',    3000, '/users/' + req.params.id, res));
+app.get('/products',     (req, res) => proxy('product-service', 3001, '/products', res));
+app.get('/products/:id', (req, res) => proxy('product-service', 3001, '/products/' + req.params.id, res));
+app.get('/orders',       (req, res) => proxy('order-service',   3002, '/orders', res));
+app.listen(3003, () => console.log('Gateway Service running on port 3003'));
+EOF
+
+gateway-service/package.json
+cat > ~/submission/gateway-service/package.json << 'EOF'
+{
+  "name": "gateway-service",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": { "start": "node index.js" },
+  "dependencies": { "express": "^4.18.2" }
+}
+EOF
+
+gateway-service/Dockerfile
+cat > ~/submission/gateway-service/Dockerfile << 'EOF'
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install --omit=dev
+COPY . .
+EXPOSE 3003
+CMD ["node", "index.js"]
+EOF
+
+
+Phase 5 — Create docker-compose.yml and README
+
+docker-compose.yml
+cat > ~/submission/docker-compose.yml << 'EOF'
+version: '3.8'
+
+services:
+  user-service:
+    build: ./user-service
+    container_name: user-service
+    ports:
+      - "3000:3000"
+    networks:
+      - microservices-net
+    restart: unless-stopped
+
+  product-service:
+    build: ./product-service
+    container_name: product-service
+    ports:
+      - "3001:3001"
+    networks:
+      - microservices-net
+    restart: unless-stopped
+
+  order-service:
+    build: ./order-service
+    container_name: order-service
+    ports:
+      - "3002:3002"
+    networks:
+      - microservices-net
+    restart: unless-stopped
+
+  gateway-service:
+    build: ./gateway-service
+    container_name: gateway-service
+    ports:
+      - "3003:3003"
+    networks:
+      - microservices-net
+    depends_on:
+      - user-service
+      - product-service
+      - order-service
+    restart: unless-stopped
+
+networks:
+  microservices-net:
+    driver: bridge
+EOF
+
+README.md
+cat > ~/submission/README.md << 'EOF'
+# Microservices with Docker on AWS EC2
+
+## Services
+| Service         | Port |
+|-----------------|------|
+| User Service    | 3000 |
+| Product Service | 3001 |
+| Order Service   | 3002 |
+| Gateway Service | 3003 |
+
+## Setup
+1. ssh -i mykey.pem ubuntu@YOUR_EC2_IP
+2. cd ~/submission
+3. docker-compose up --build -d
+
+## Testing
+curl http://YOUR_EC2_IP:3000/users
+curl http://YOUR_EC2_IP:3001/products
+curl http://YOUR_EC2_IP:3002/orders
+curl http://YOUR_EC2_IP:3003/users
+EOF
+
+
+Phase 6 — Launch Everything
+
+Step 1 — Go to submission folder
+cd ~/submission
+
+Step 2 — Build and start all services
+docker-compose up --build -d
+Tip: This takes 2-3 minutes the first time. The -d flag runs in the background.
+
+Step 3 — Check all containers are running
+docker-compose ps
+All 4 services should show status: Up
+
+Step 4 — View logs if something is wrong
+docker-compose logs user-service
+docker-compose logs product-service
+docker-compose logs order-service
+docker-compose logs gateway-service
+
+
+Phase 7 — Test All Services
+Replace YOUR_EC2_IP with your actual EC2 IP address.
+
+Health checks
+curl http://YOUR_EC2_IP:3000/health
+curl http://YOUR_EC2_IP:3001/health
+curl http://YOUR_EC2_IP:3002/health
+curl http://YOUR_EC2_IP:3003/health
+
+Data endpoints
+curl http://YOUR_EC2_IP:3000/users
+curl http://YOUR_EC2_IP:3001/products
+curl http://YOUR_EC2_IP:3002/orders
+
+Gateway routes
+curl http://YOUR_EC2_IP:3003/users
+curl http://YOUR_EC2_IP:3003/products
+curl http://YOUR_EC2_IP:3003/orders
+Tip: Also open these URLs in your browser and take screenshots for submission!
+
+
+Phase 8 — Create ZIP and Download to Mac
+
+Step 1 — Create ZIP on EC2
+cd ~
+zip -r submission.zip submission/
+
+Step 2 — Open a NEW terminal on your Mac and download
+scp -i ~/Downloads/mykey.pem ubuntu@YOUR_EC2_IP:~/submission.zip ~/Desktop/submission.zip
+Tip: The file will appear on your Mac Desktop, ready to submit!
+
+
+Phase 9 — If They Provide Source Code via GitHub
+When the test provides a GitHub repo with source code, follow these steps:
+
+Step 1 — Delete old demo code
+cd ~
+rm -rf submission
+
+Step 2 — Clone their repo into submission folder
+git clone THEIR_GITHUB_REPO_URL submission
+
+Step 3 — Check what port each service uses
+cat submission/user-service/index.js | grep listen
+cat submission/product-service/index.js | grep listen
+cat submission/gateway-service/index.js | grep listen
+Look for: app.listen(PORT, ...) — that number is your port for the Dockerfile and docker-compose.yml
+
+Step 4 — Add Dockerfiles and docker-compose.yml
+Use the same Dockerfile template for each service — only change the EXPOSE port number:
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install --omit=dev
+COPY . .
+EXPOSE PUT_PORT_NUMBER_HERE
+CMD ["node", "index.js"]
+
+Step 5 — If you want to edit an existing file
+nano ~/submission/user-service/index.js
+Key	Action
+Ctrl + K	Delete current line
+Ctrl + X	Exit nano
+Y then Enter	Save the file when exiting
+Cmd + V	Paste content (on Mac)
+
+Step 6 — Rebuild with new code
+cd ~/submission
+docker-compose down
+docker-compose up --build -d
+docker-compose ps
+
+
+Troubleshooting
+
+Problem	Fix
+Container shows Exit status	docker-compose logs service-name
+Port not accessible in browser	Check EC2 Security Group — add inbound rule for that port
+Permission denied on docker	Run: newgrp docker
+Build fails	docker-compose build --no-cache
+Stop all containers	docker-compose down
+Restart one service	docker-compose restart service-name
+See running containers	docker ps
+Lost in folders	cd ~/submission to go back
